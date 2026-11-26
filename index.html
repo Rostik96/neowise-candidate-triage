@@ -5,10 +5,15 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Входящие заявки</title>
   <style>
-    body { max-width: 40rem; margin: 2rem auto; padding: 0 1rem; font: 1rem/1.5 system-ui, sans-serif; }
+    body { max-width: 40rem; margin: 2rem auto; padding: 0 1rem; font: 1rem/1.5 system-ui, sans-serif; color: #1a1a1a; }
     textarea { box-sizing: border-box; display: block; width: 100%; margin: .5rem 0; padding: .5rem; font: inherit; }
     button { padding: .4rem .8rem; font: inherit; }
-    pre { white-space: pre-wrap; }
+    #notice { min-height: 1.5em; }
+    #outcome { margin-top: 1rem; padding: 1rem; border: 1px solid #ccc; border-radius: .5rem; }
+    #outcome h2 { margin: 0 0 .25rem; font-size: 1rem; }
+    #topic { margin: 0 0 1rem; }
+    #draft { white-space: pre-wrap; margin: 0; }
+    #hint { margin: .75rem 0 0; color: #444; }
   </style>
 </head>
 <body>
@@ -18,18 +23,75 @@
     <textarea id="message" rows="4"></textarea>
     <button type="submit">Разобрать заявку</button>
   </form>
-  <pre id="result" aria-live="polite"></pre>
+  <div id="result" aria-live="polite">
+    <p id="notice"></p>
+    <section id="outcome" hidden>
+      <h2>Тема</h2>
+      <p id="topic"></p>
+      <h2>Черновик ответа</h2>
+      <p id="draft"></p>
+      <p id="hint">Проверьте текст перед отправкой клиенту.</p>
+    </section>
+  </div>
   <script type="module">
+    const TOPICS = {
+      delivery: "Доставка",
+      pricing: "Стоимость",
+      other: "Другое",
+    };
+    const MANUAL_REVIEW_MESSAGE = "Автоматически разобрать заявку не получилось. Разберите её вручную. Предыдущий черновик убран.";
+    const INVALID_INPUT_MESSAGE = "Введите непустой текст заявки.";
+    const FAILURE_MESSAGE = "Сервис не смог разобрать заявку. Разберите её вручную. Предыдущий черновик убран.";
+
     const form = document.querySelector("form");
-    const result = document.querySelector("#result");
+    const message = document.querySelector("#message");
+    const button = form.querySelector("button");
+    const notice = document.querySelector("#notice");
+    const outcome = document.querySelector("#outcome");
+    const topic = document.querySelector("#topic");
+    const draft = document.querySelector("#draft");
+    let requestId = 0;
+
+    function clearDraft() {
+      topic.textContent = "";
+      draft.textContent = "";
+      outcome.hidden = true;
+    }
+
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
-      const reply = await fetch("/api/triage", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: document.querySelector("#message").value }),
-      });
-      result.textContent = JSON.stringify(await reply.json(), null, 2);
+      const current = ++requestId;
+      button.disabled = true;
+      notice.textContent = "Разбираем заявку…";
+      clearDraft();
+      try {
+        const reply = await fetch("/api/triage", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text: message.value }),
+        });
+        const body = await reply.json();
+        if (current !== requestId) return;
+        if (body.status === "ready" && typeof body.draft === "string" && body.draft.trim()) {
+          notice.textContent = "";
+          topic.textContent = TOPICS[body.topic] ?? body.topic;
+          draft.textContent = body.draft;
+          outcome.hidden = false;
+          return;
+        }
+        clearDraft();
+        notice.textContent = body.status === "invalid_input"
+          ? INVALID_INPUT_MESSAGE
+          : body.status === "manual_review"
+            ? MANUAL_REVIEW_MESSAGE
+            : FAILURE_MESSAGE;
+      } catch {
+        if (current !== requestId) return;
+        clearDraft();
+        notice.textContent = FAILURE_MESSAGE;
+      } finally {
+        if (current === requestId) button.disabled = false;
+      }
     });
   </script>
 </body>
